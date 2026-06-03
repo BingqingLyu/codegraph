@@ -419,7 +419,8 @@ program
   .description('Initialize CodeGraph in a project directory and build the initial index')
   .option('-i, --index', 'Deprecated: indexing now runs by default; flag accepted for backward compatibility')
   .option('-v, --verbose', 'Show detailed worker lifecycle and memory info')
-  .action(async (pathArg: string | undefined, options: { index?: boolean; verbose?: boolean }) => {
+  .option('-b, --backend <backend>', 'Storage backend: sqlite (default) or neug', 'sqlite')
+  .action(async (pathArg: string | undefined, options: { index?: boolean; verbose?: boolean; backend?: string }) => {
     const projectPath = path.resolve(pathArg || process.cwd());
     const clack = await importESM('@clack/prompts');
 
@@ -438,8 +439,9 @@ program
       }
 
       const { default: CodeGraph } = await loadCodeGraph();
-      const cg = await CodeGraph.init(projectPath, { index: false });
-      clack.log.success(`Initialized in ${projectPath}`);
+      const backend = (options.backend === 'neug' ? 'neug' : 'sqlite') as import('../db').StorageBackendType;
+      const cg = await CodeGraph.init(projectPath, { index: false, backend });
+      clack.log.success(`Initialized in ${projectPath} (backend: ${backend})`);
 
       // Indexing runs by default now. The legacy -i/--index flag is still
       // accepted (so existing muscle memory and scripts don't break) but is a
@@ -744,18 +746,18 @@ program
       console.log(`  Nodes:     ${formatNumber(stats.nodeCount)}`);
       console.log(`  Edges:     ${formatNumber(stats.edgeCount)}`);
       console.log(`  DB Size:   ${(stats.dbSizeBytes / 1024 / 1024).toFixed(2)} MB`);
-      // Surface the active SQLite backend (node:sqlite — Node's built-in real
-      // SQLite, full WAL + FTS5, no native build).
-      const backendLabel = chalk.green(`node:sqlite ${getGlyphs().dash} built-in (full WAL)`);
+      // Surface the active storage backend.
+      const backendLabel = backend === 'neug'
+        ? chalk.green(`neug ${getGlyphs().dash} graph database (Cypher)`)
+        : chalk.green(`node:sqlite ${getGlyphs().dash} built-in (full WAL)`);
       console.log(`  Backend:   ${backendLabel}`);
-      // Effective journal mode: 'wal' means concurrent reads never block on a
-      // writer; anything else means they can ("database is locked"). node:sqlite
-      // supports WAL everywhere, so a non-wal mode means the filesystem can't
-      // (network mounts, WSL2 /mnt). See issue #238.
-      const journalLabel = journalMode === 'wal'
-        ? chalk.green('wal')
-        : chalk.yellow(`${journalMode || 'unknown'} ${getGlyphs().dash} WAL inactive; reads can block on writes`);
-      console.log(`  Journal:   ${journalLabel}`);
+      // Journal mode is only meaningful for SQLite.
+      if (backend !== 'neug') {
+        const journalLabel = journalMode === 'wal'
+          ? chalk.green('wal')
+          : chalk.yellow(`${journalMode || 'unknown'} ${getGlyphs().dash} WAL inactive; reads can block on writes`);
+        console.log(`  Journal:   ${journalLabel}`);
+      }
       console.log();
 
       // Node breakdown
