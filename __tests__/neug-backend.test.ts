@@ -505,6 +505,309 @@ async function main() {
     });
   });
 
+  // ── Batch operations ──────────────────────────────────────
+
+  describe('insertNodes (batch)', () => {
+    it('inserts multiple nodes at once', () => {
+      clearAll();
+      qb.insertNodes([
+        mkNode({ id: 'batch::a', name: 'batchA' }),
+        mkNode({ id: 'batch::b', name: 'batchB' }),
+        mkNode({ id: 'batch::c', name: 'batchC' }),
+      ]);
+      expect(qb.getNodeById('batch::a')).not.toBeNull();
+      expect(qb.getNodeById('batch::b')).not.toBeNull();
+      expect(qb.getNodeById('batch::c')).not.toBeNull();
+    });
+  });
+
+  describe('insertEdges (batch)', () => {
+    it('inserts multiple edges at once', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'be::a', name: 'beA' }));
+      qb.insertNode(mkNode({ id: 'be::b', name: 'beB' }));
+      qb.insertNode(mkNode({ id: 'be::c', name: 'beC' }));
+      qb.insertEdges([
+        { source: 'be::a', target: 'be::b', kind: 'calls' },
+        { source: 'be::b', target: 'be::c', kind: 'calls' },
+      ]);
+      const out = qb.getOutgoingEdges('be::a');
+      expect(out.length).toBe(1);
+      expect(out[0].target).toBe('be::b');
+      const out2 = qb.getOutgoingEdges('be::b');
+      expect(out2.length).toBe(1);
+      expect(out2[0].target).toBe('be::c');
+    });
+  });
+
+  describe('updateNode', () => {
+    it('updates an existing node', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'upd::1', name: 'original' }));
+      qb.updateNode(mkNode({ id: 'upd::1', name: 'updated' }));
+      const node = qb.getNodeById('upd::1');
+      expect(node.name).toBe('updated');
+    });
+  });
+
+  // ── Node query methods ──────────────────────────────────────
+
+  describe('getAllNodes', () => {
+    it('returns all nodes in the graph', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'all::a', name: 'allA' }));
+      qb.insertNode(mkNode({ id: 'all::b', name: 'allB' }));
+      const nodes = qb.getAllNodes();
+      expect(nodes.length).toBe(2);
+    });
+  });
+
+  describe('getNodesByName', () => {
+    it('returns nodes matching exact name', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'gbn::1', name: 'targetName' }));
+      qb.insertNode(mkNode({ id: 'gbn::2', name: 'otherName' }));
+      const results = qb.getNodesByName('targetName');
+      expect(results.length).toBe(1);
+      expect(results[0].id).toBe('gbn::1');
+    });
+  });
+
+  describe('getNodesByQualifiedNameExact', () => {
+    it('returns nodes matching qualified name', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'qn::1', name: 'method', qualifiedName: 'MyClass.method' }));
+      qb.insertNode(mkNode({ id: 'qn::2', name: 'method', qualifiedName: 'Other.method' }));
+      const results = qb.getNodesByQualifiedNameExact('MyClass.method');
+      expect(results.length).toBe(1);
+      expect(results[0].id).toBe('qn::1');
+    });
+  });
+
+  describe('getNodesByLowerName', () => {
+    it('finds nodes case-insensitively', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'ln::1', name: 'MyFunction' }));
+      const results = qb.getNodesByLowerName('myfunction');
+      expect(results.length).toBe(1);
+      expect(results[0].id).toBe('ln::1');
+    });
+  });
+
+  describe('getAllNodeNames', () => {
+    it('returns distinct node names', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'ann::1', name: 'alpha' }));
+      qb.insertNode(mkNode({ id: 'ann::2', name: 'beta' }));
+      qb.insertNode(mkNode({ id: 'ann::3', name: 'alpha' }));
+      const names = qb.getAllNodeNames();
+      expect(names.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  // ── File operations (extended) ──────────────────────────────
+
+  describe('getStaleFiles', () => {
+    it('detects files whose hash has changed', () => {
+      clearAll();
+      qb.upsertFile({ path: '/stale/a.ts', contentHash: 'hash1', language: 'typescript', size: 100, modifiedAt: Date.now(), indexedAt: Date.now(), nodeCount: 1, errors: null });
+      qb.upsertFile({ path: '/stale/b.ts', contentHash: 'hash2', language: 'typescript', size: 200, modifiedAt: Date.now(), indexedAt: Date.now(), nodeCount: 2, errors: null });
+
+      const currentHashes = new Map([
+        ['/stale/a.ts', 'hash1'],
+        ['/stale/b.ts', 'CHANGED'],
+      ]);
+      const stale = qb.getStaleFiles(currentHashes);
+      expect(stale.length).toBe(1);
+      expect(stale[0].path).toBe('/stale/b.ts');
+    });
+  });
+
+  // ── Unresolved references (extended) ────────────────────────
+
+  describe('deleteUnresolvedByNode', () => {
+    it('removes unresolved refs for a specific node', () => {
+      clearAll();
+      qb.insertUnresolvedRef({ fromNodeId: 'ref::src1', referenceName: 'foo', referenceKind: 'call', line: 1, col: 1, filePath: '/a.ts', language: 'typescript' });
+      qb.insertUnresolvedRef({ fromNodeId: 'ref::src2', referenceName: 'bar', referenceKind: 'call', line: 2, col: 1, filePath: '/a.ts', language: 'typescript' });
+      qb.deleteUnresolvedByNode('ref::src1');
+      const refs = qb.getUnresolvedReferences();
+      expect(refs.length).toBe(1);
+      expect(refs[0].fromNodeId).toBe('ref::src2');
+    });
+  });
+
+  describe('getUnresolvedByName', () => {
+    it('finds unresolved refs by reference name', () => {
+      clearAll();
+      qb.insertUnresolvedRef({ fromNodeId: 'ubn::1', referenceName: 'myTarget', referenceKind: 'call', line: 5, col: 3, filePath: '/x.ts', language: 'typescript' });
+      qb.insertUnresolvedRef({ fromNodeId: 'ubn::2', referenceName: 'other', referenceKind: 'call', line: 6, col: 1, filePath: '/x.ts', language: 'typescript' });
+      const results = qb.getUnresolvedByName('myTarget');
+      expect(results.length).toBe(1);
+      expect(results[0].fromNodeId).toBe('ubn::1');
+    });
+  });
+
+  describe('getUnresolvedReferencesBatch', () => {
+    it('returns paginated unresolved refs', () => {
+      clearAll();
+      for (let i = 0; i < 5; i++) {
+        qb.insertUnresolvedRef({ fromNodeId: `pb::${i}`, referenceName: `ref${i}`, referenceKind: 'call', line: i, col: 0, filePath: '/p.ts', language: 'typescript' });
+      }
+      const batch = qb.getUnresolvedReferencesBatch(0, 3);
+      expect(batch.length).toBe(3);
+      const batch2 = qb.getUnresolvedReferencesBatch(3, 3);
+      expect(batch2.length).toBe(2);
+    });
+  });
+
+  describe('getUnresolvedReferencesByFiles', () => {
+    it('returns refs filtered by file path', () => {
+      clearAll();
+      qb.insertUnresolvedRef({ fromNodeId: 'rbf::1', referenceName: 'x', referenceKind: 'call', line: 1, col: 0, filePath: '/target.ts', language: 'typescript' });
+      qb.insertUnresolvedRef({ fromNodeId: 'rbf::2', referenceName: 'y', referenceKind: 'call', line: 2, col: 0, filePath: '/other.ts', language: 'typescript' });
+      const results = qb.getUnresolvedReferencesByFiles(['/target.ts']);
+      expect(results.length).toBe(1);
+      expect(results[0].fromNodeId).toBe('rbf::1');
+    });
+  });
+
+  describe('deleteResolvedReferences', () => {
+    it('deletes refs by fromNodeId list', () => {
+      clearAll();
+      qb.insertUnresolvedRef({ fromNodeId: 'dr::1', referenceName: 'a', referenceKind: 'call', line: 1, col: 0, filePath: '/d.ts', language: 'typescript' });
+      qb.insertUnresolvedRef({ fromNodeId: 'dr::2', referenceName: 'b', referenceKind: 'call', line: 2, col: 0, filePath: '/d.ts', language: 'typescript' });
+      qb.insertUnresolvedRef({ fromNodeId: 'dr::3', referenceName: 'c', referenceKind: 'call', line: 3, col: 0, filePath: '/d.ts', language: 'typescript' });
+      qb.deleteResolvedReferences(['dr::1', 'dr::2']);
+      const refs = qb.getUnresolvedReferences();
+      expect(refs.length).toBe(1);
+      expect(refs[0].fromNodeId).toBe('dr::3');
+    });
+  });
+
+  describe('deleteSpecificResolvedReferences', () => {
+    it('deletes specific ref by node+name+kind', () => {
+      clearAll();
+      qb.insertUnresolvedRef({ fromNodeId: 'dsr::1', referenceName: 'target', referenceKind: 'call', line: 1, col: 0, filePath: '/s.ts', language: 'typescript' });
+      qb.insertUnresolvedRef({ fromNodeId: 'dsr::1', referenceName: 'keep', referenceKind: 'type', line: 2, col: 0, filePath: '/s.ts', language: 'typescript' });
+      qb.deleteSpecificResolvedReferences([{ fromNodeId: 'dsr::1', referenceName: 'target', referenceKind: 'call' }]);
+      const refs = qb.getUnresolvedReferences();
+      expect(refs.length).toBe(1);
+      expect(refs[0].referenceName).toBe('keep');
+    });
+  });
+
+  // ── Status/routing methods ──────────────────────────────────
+
+  describe('getDominantFile', () => {
+    it('returns file with most edges (needs >= 20 edges)', () => {
+      clearAll();
+      // getDominantFile requires >= 20 edges in a single file to be non-null
+      const nodes: any[] = [];
+      for (let i = 0; i < 25; i++) {
+        nodes.push(mkNode({ id: `dom::n${i}`, name: `domFn${i}`, filePath: '/dom/main.ts' }));
+      }
+      qb.insertNodes(nodes);
+      // Create 24 intra-file edges (each pair in same file)
+      for (let i = 0; i < 24; i++) {
+        qb.insertEdge({ source: `dom::n${i}`, target: `dom::n${i + 1}`, kind: 'calls' });
+      }
+      const result = qb.getDominantFile();
+      expect(result).not.toBeNull();
+      expect(result.filePath).toBe('/dom/main.ts');
+      expect(result.edgeCount).toBeGreaterThanOrEqual(20);
+    });
+
+    it('returns null when no nodes exist', () => {
+      clearAll();
+      const result = qb.getDominantFile();
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getTopRouteFile', () => {
+    it('returns file with most route nodes (needs >= 3 routes, top file >= 3)', () => {
+      clearAll();
+      // getTopRouteFile requires: totalRoutes >= 3, top file count >= 3, top/total >= 0.30
+      qb.insertNode(mkNode({ id: 'rt::1', name: 'GET /api/users', kind: 'route', filePath: '/routes/api.ts' } as any));
+      qb.insertNode(mkNode({ id: 'rt::2', name: 'POST /api/users', kind: 'route', filePath: '/routes/api.ts' } as any));
+      qb.insertNode(mkNode({ id: 'rt::3', name: 'DELETE /api/users', kind: 'route', filePath: '/routes/api.ts' } as any));
+      qb.insertNode(mkNode({ id: 'rt::4', name: 'GET /web', kind: 'route', filePath: '/routes/web.ts' } as any));
+      const result = qb.getTopRouteFile();
+      expect(result).not.toBeNull();
+      expect(result.filePath).toBe('/routes/api.ts');
+      expect(result.routeCount).toBe(3);
+      expect(result.totalRoutes).toBe(4);
+    });
+
+    it('returns null when no routes exist', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'nort::1', name: 'fn' }));
+      const result = qb.getTopRouteFile();
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getRoutingManifest', () => {
+    it('returns route manifest when routes have handler edges', () => {
+      clearAll();
+      // Routes need edges to handler nodes (function/method) to appear in manifest
+      qb.insertNode(mkNode({ id: 'rm::r1', name: 'GET /users', kind: 'route', filePath: '/routes/users.ts' } as any));
+      qb.insertNode(mkNode({ id: 'rm::r2', name: 'POST /users', kind: 'route', filePath: '/routes/users.ts' } as any));
+      qb.insertNode(mkNode({ id: 'rm::r3', name: 'DELETE /users', kind: 'route', filePath: '/routes/users.ts' } as any));
+      qb.insertNode(mkNode({ id: 'rm::r4', name: 'GET /health', kind: 'route', filePath: '/routes/health.ts' } as any));
+      // Handler functions
+      qb.insertNode(mkNode({ id: 'rm::h1', name: 'listUsers', filePath: '/handlers/users.ts', startLine: 10 }));
+      qb.insertNode(mkNode({ id: 'rm::h2', name: 'createUser', filePath: '/handlers/users.ts', startLine: 30 }));
+      qb.insertNode(mkNode({ id: 'rm::h3', name: 'deleteUser', filePath: '/handlers/users.ts', startLine: 50 }));
+      qb.insertNode(mkNode({ id: 'rm::h4', name: 'healthCheck', filePath: '/handlers/health.ts', startLine: 5 }));
+      // Route -> handler edges
+      qb.insertEdge({ source: 'rm::r1', target: 'rm::h1', kind: 'references' });
+      qb.insertEdge({ source: 'rm::r2', target: 'rm::h2', kind: 'references' });
+      qb.insertEdge({ source: 'rm::r3', target: 'rm::h3', kind: 'references' });
+      qb.insertEdge({ source: 'rm::r4', target: 'rm::h4', kind: 'references' });
+
+      const manifest = qb.getRoutingManifest(10);
+      expect(manifest).not.toBeNull();
+      expect(manifest.totalRoutes).toBeGreaterThanOrEqual(3);
+      expect(manifest.topHandlerFile).toBe('/handlers/users.ts');
+    });
+  });
+
+  // ── GraphTraverser: callees + impact ────────────────────────
+
+  describe('getCallees (via GraphTraverser)', () => {
+    it('returns direct callees', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'ce::a', name: 'caller' }));
+      qb.insertNode(mkNode({ id: 'ce::b', name: 'callee1' }));
+      qb.insertNode(mkNode({ id: 'ce::c', name: 'callee2' }));
+      qb.insertEdge({ source: 'ce::a', target: 'ce::b', kind: 'calls' });
+      qb.insertEdge({ source: 'ce::a', target: 'ce::c', kind: 'calls' });
+
+      const { GraphTraverser } = require('../src/graph/traversal');
+      const traverser = new GraphTraverser(qb as any);
+      const callees = traverser.getCallees('ce::a');
+      expect(callees.length).toBe(2);
+    });
+  });
+
+  describe('getImpactRadius (via GraphTraverser)', () => {
+    it('finds transitive callers (impact)', () => {
+      clearAll();
+      qb.insertNode(mkNode({ id: 'imp::a', name: 'root' }));
+      qb.insertNode(mkNode({ id: 'imp::b', name: 'mid' }));
+      qb.insertNode(mkNode({ id: 'imp::c', name: 'leaf' }));
+      qb.insertEdge({ source: 'imp::b', target: 'imp::a', kind: 'calls' });
+      qb.insertEdge({ source: 'imp::c', target: 'imp::b', kind: 'calls' });
+
+      const { GraphTraverser } = require('../src/graph/traversal');
+      const traverser = new GraphTraverser(qb as any);
+      const impact = traverser.getImpactRadius('imp::a', { maxDepth: 3 });
+      expect(impact.nodes.size).toBeGreaterThanOrEqual(3);
+    });
+  });
+
   // ── Summary ──────────────────────────────────────────────
 
   console.log(`\n  ${_passed} passed, ${_failed} failed`);
