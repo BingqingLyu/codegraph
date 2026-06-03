@@ -706,6 +706,17 @@ export class CodeGraph {
   }
 
   /**
+   * Execute a raw Cypher query (NeuG backend only).
+   * Throws if called on a SQLite backend.
+   */
+  executeCypher(query: string, params?: Record<string, any>): any[][] {
+    if (this.backendType !== 'neug') {
+      throw new Error('executeCypher is only available with the NeuG backend');
+    }
+    return (this.queries as any).executeCypher(query, params);
+  }
+
+  /**
    * The journal mode actually in effect ('wal', 'delete', …). 'wal' means
    * readers never block on a concurrent writer; anything else means they can,
    * which is the precondition for the "database is locked" failures in issue

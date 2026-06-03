@@ -1569,6 +1569,54 @@ program
   });
 
 /**
+ * codegraph cypher — Execute a raw Cypher query (NeuG backend only)
+ */
+program
+  .command('cypher <query>')
+  .description('Execute a Cypher query against the code graph (NeuG backend only)')
+  .option('-p, --path <path>', 'Project path')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (query: string, options: { path?: string; json?: boolean }) => {
+    const projectPath = resolveProjectPath(options.path);
+
+    try {
+      if (!isInitialized(projectPath)) {
+        error(`CodeGraph not initialized in ${projectPath}`);
+        process.exit(1);
+      }
+
+      const { default: CodeGraph } = await loadCodeGraph();
+      const cg = await CodeGraph.open(projectPath);
+
+      if (cg.getBackendType() !== 'neug') {
+        error('The cypher command is only available with the NeuG backend.\n  Initialize with: codegraph init --backend neug');
+        cg.destroy();
+        process.exit(1);
+      }
+
+      const rows = cg.executeCypher(query);
+
+      if (options.json) {
+        console.log(JSON.stringify(rows, null, 2));
+      } else {
+        if (rows.length === 0) {
+          info('(empty result)');
+        } else {
+          for (const row of rows) {
+            console.log(row.map(v => v === null ? 'NULL' : String(v)).join('\t'));
+          }
+          console.log(chalk.dim(`\n${rows.length} row(s)`));
+        }
+      }
+
+      cg.destroy();
+    } catch (err) {
+      error(`Cypher query failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+/**
  * codegraph install
  */
 program

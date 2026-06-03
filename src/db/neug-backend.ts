@@ -24,6 +24,7 @@ import {
 import { safeJsonParse } from '../utils';
 import { kindBonus, nameMatchBonus, scorePathRelevance } from '../search/query-utils';
 import { parseQuery, boundedEditDistance } from '../search/query-parser';
+import { isGeneratedFile } from '../extraction/generated-detection';
 
 // NeuG types — imported dynamically, declared here for type safety
 
@@ -169,6 +170,24 @@ function escapeCypherLiteral(s: string): string {
 
 function cypherInList(values: readonly string[]): string {
   return '[' + values.map(v => `'${escapeCypherLiteral(v)}'`).join(', ') + ']';
+}
+
+function isLowValueFile(filePath: string): boolean {
+  const lp = filePath.toLowerCase();
+  return (
+    /(?:^|\/)(tests?|__tests?__|spec)\//.test(lp) ||
+    /_test\.go$/.test(lp) ||
+    /(?:^|\/)test_[^/]+\.py$/.test(lp) ||
+    /_test\.py$/.test(lp) ||
+    /_spec\.rb$/.test(lp) ||
+    /_test\.rb$/.test(lp) ||
+    /\.(test|spec)\.[jt]sx?$/.test(lp) ||
+    /(test|spec|tests)\.(java|kt|scala)$/.test(lp) ||
+    /(tests?|spec)\.cs$/.test(lp) ||
+    /tests?\.swift$/.test(lp) ||
+    /_test\.dart$/.test(lp) ||
+    isGeneratedFile(filePath)
+  );
 }
 
 function rowToUnresolved(row: any[]): UnresolvedReference {
@@ -936,6 +955,181 @@ export class NeuGQueryBuilder {
       out[row[0]] = row[1];
     }
     return out;
+  }
+
+  // ===========================================================================
+  // Additional Query Methods (needed by GraphQueryManager, ContextBuilder, MCP)
+  // ===========================================================================
+
+  getNodeAndEdgeCount(): { nodes: number; edges: number } {
+    const nc = this.conn.execute('MATCH (n:CodeNode) RETURN count(n)', 'read');
+    const ec = this.conn.execute('MATCH ()-[e:CodeEdge]->() RETURN count(e)', 'read');
+    return { nodes: nc.toArray()[0]?.[0] ?? 0, edges: ec.toArray()[0]?.[0] ?? 0 };
+  }
+
+  getDominantFile(): { filePath: string; edgeCount: number; nextEdgeCount: number } | null {
+    const result = this.conn.execute(
+      `MATCH (n:CodeNode)-[e:CodeEdge]-(m:CodeNode)
+       WHERE n.file_path = m.file_path
+       RETURN n.file_path, count(e) AS edge_count
+       ORDER BY edge_count DESC LIMIT 20`,
+      'read'
+    );
+    const rows = result.toArray().filter(r => r[0] && !isLowValueFile(r[0]));
+    if (rows.length === 0 || rows[0]![1] < 20) return null;
+    return {
+      filePath: rows[0]![0],
+      edgeCount: rows[0]![1],
+      nextEdgeCount: rows[1]?.[1] ?? 0,
+    };
+  }
+
+  getTopRouteFile(): { filePath: string; routeCount: number; totalRoutes: number } | null {
+    const result = this.conn.execute(
+      `MATCH (n:CodeNode {kind: 'route'})
+       RETURN n.file_path, count(n) AS cnt
+       ORDER BY cnt DESC LIMIT 20`,
+      'read'
+    );
+    const rows = result.toArray().filter(r => r[0] && !isLowValueFile(r[0]));
+    if (rows.length === 0) return null;
+    const totalRoutes = rows.reduce((sum, r) => sum + r[1], 0);
+    const top = rows[0]!;
+    if (totalRoutes < 3 || top[1] < 3) return null;
+    if (top[1] / totalRoutes < 0.30) return null;
+    return { filePath: top[0], routeCount: top[1], totalRoutes };
+  }
+
+  getRoutingManifest(limit: number = 40): {
+    entries: Array<{ url: string; handler: string; handlerFile: string; handlerLine: number; handlerKind: string }>;
+    topHandlerFile: string | null;
+    topHandlerFileCount: number;
+    totalRoutes: number;
+  } | null {
+    const result = this.conn.execute(
+      `MATCH (r:CodeNode {kind: 'route'})-[e:CodeEdge]->(h:CodeNode)
+       WHERE e.kind IN ['references', 'calls'] AND h.kind IN ['function', 'method', 'class']
+       RETURN r.name, h.name, h.file_path, h.start_line, h.kind
+       ORDER BY r.file_path, r.start_line LIMIT ${limit}`,
+      'read'
+    );
+    const rows = result.toArray().filter(r => r[2] && !isLowValueFile(r[2]));
+    if (rows.length < 3) return null;
+
+    const fileCounts = new Map<string, number>();
+    for (const r of rows) {
+      fileCounts.set(r[2], (fileCounts.get(r[2]) ?? 0) + 1);
+    }
+    let topHandlerFile: string | null = null;
+    let topHandlerFileCount = 0;
+    for (const [file, count] of fileCounts) {
+      if (count > topHandlerFileCount) {
+        topHandlerFile = file;
+        topHandlerFileCount = count;
+      }
+    }
+
+    return {
+      entries: rows.map(r => ({
+        url: r[0],
+        handler: r[1],
+        handlerFile: r[2],
+        handlerLine: r[3] ?? 0,
+        handlerKind: r[4],
+      })),
+      topHandlerFile,
+      topHandlerFileCount,
+      totalRoutes: rows.length,
+    };
+  }
+
+  findNodesByExactName(names: string[], options: SearchOptions = {}): SearchResult[] {
+    if (names.length === 0) return [];
+    const { kinds, languages, limit = 50 } = options;
+
+    const nameToFiles = new Map<string, Set<string>>();
+    for (const name of names) {
+      let cypher = `MATCH (n:CodeNode {name: $name}) RETURN DISTINCT n.file_path LIMIT 100`;
+      const r = this.conn.execute(cypher, 'read', { name });
+      nameToFiles.set(name.toLowerCase(), new Set(r.toArray().map(row => row[0]).filter(Boolean)));
+    }
+
+    const distinctiveFiles = new Set<string>();
+    for (const [, files] of nameToFiles) {
+      if (files.size > 0 && files.size < 10) {
+        for (const f of files) distinctiveFiles.add(f);
+      }
+    }
+
+    const perNameLimit = Math.max(8, Math.ceil(limit / names.length));
+    const allResults: SearchResult[] = [];
+    const seenIds = new Set<string>();
+
+    for (const name of names) {
+      let cypher = `MATCH (n:CodeNode {name: $name})`;
+      const conditions: string[] = [];
+      if (kinds && kinds.length > 0) {
+        conditions.push(`n.kind IN ${cypherInList(kinds)}`);
+      }
+      if (languages && languages.length > 0) {
+        conditions.push(`n.language IN ${cypherInList(languages)}`);
+      }
+      if (conditions.length > 0) cypher += ` WHERE ${conditions.join(' AND ')}`;
+      cypher += ` RETURN n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
+                         n.start_line, n.end_line, n.start_column, n.end_column,
+                         n.docstring, n.signature, n.visibility,
+                         n.is_exported, n.is_async, n.is_static, n.is_abstract,
+                         n.decorators, n.type_parameters, n.updated_at
+                  LIMIT ${perNameLimit * 3}`;
+      const r = this.conn.execute(cypher, 'read', { name });
+      const nameResults: SearchResult[] = [];
+      for (const row of r) {
+        const node = rowToNode(row);
+        if (seenIds.has(node.id)) continue;
+        const coLocationBoost = distinctiveFiles.has(node.filePath) ? 20 : 0;
+        nameResults.push({ node, score: 1 + coLocationBoost });
+      }
+      nameResults.sort((a, b) => b.score - a.score);
+      for (const r of nameResults.slice(0, perNameLimit)) {
+        seenIds.add(r.node.id);
+        allResults.push(r);
+      }
+    }
+
+    allResults.sort((a, b) => b.score - a.score);
+    return allResults.slice(0, limit);
+  }
+
+  findNodesByNameSubstring(
+    substring: string,
+    options: SearchOptions & { excludePrefix?: boolean } = {}
+  ): SearchResult[] {
+    const { kinds, languages, limit = 30 } = options;
+    const escaped = escapeCypherLiteral(substring);
+    let cypher = `MATCH (n:CodeNode) WHERE n.name CONTAINS '${escaped}'`;
+    if (kinds && kinds.length > 0) {
+      cypher += ` AND n.kind IN ${cypherInList(kinds)}`;
+    }
+    if (languages && languages.length > 0) {
+      cypher += ` AND n.language IN ${cypherInList(languages)}`;
+    }
+    cypher += ` RETURN n.id, n.kind, n.name, n.qualified_name, n.file_path, n.language,
+                       n.start_line, n.end_line, n.start_column, n.end_column,
+                       n.docstring, n.signature, n.visibility,
+                       n.is_exported, n.is_async, n.is_static, n.is_abstract,
+                       n.decorators, n.type_parameters, n.updated_at
+                LIMIT ${limit}`;
+    const result = this.conn.execute(cypher, 'read');
+    return result.toArray().map(row => ({ node: rowToNode(row), score: 1 }));
+  }
+
+  // ===========================================================================
+  // Raw Cypher Execution (NeuG-only capability)
+  // ===========================================================================
+
+  executeCypher(query: string, params?: Record<string, any>): any[][] {
+    const result = this.conn.execute(query, 'read', params ?? null);
+    return result.toArray();
   }
 
   // ===========================================================================

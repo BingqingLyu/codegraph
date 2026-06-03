@@ -445,6 +445,66 @@ async function main() {
     });
   });
 
+  // ── New methods (getNodeAndEdgeCount, findByName, executeCypher) ──
+
+  describe('getNodeAndEdgeCount', () => {
+    it('returns correct counts', () => {
+      qb.insertNode(mkNode({ id: 'fn::count1', name: 'count1' }));
+      qb.insertNode(mkNode({ id: 'fn::count2', name: 'count2' }));
+      qb.insertEdge({ source: 'fn::count1', target: 'fn::count2', kind: 'calls' });
+
+      const counts = qb.getNodeAndEdgeCount();
+      expect(counts.nodes).toBeGreaterThanOrEqual(2);
+      expect(counts.edges).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('findNodesByExactName', () => {
+    it('finds nodes by exact name match', () => {
+      qb.insertNode(mkNode({ id: 'fn::exactA', name: 'exactAlpha' }));
+      qb.insertNode(mkNode({ id: 'fn::exactB', name: 'exactBeta' }));
+
+      const results = qb.findNodesByExactName(['exactAlpha']);
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results.some((r: any) => r.node.name === 'exactAlpha')).toBe(true);
+    });
+
+    it('returns empty for non-existent names', () => {
+      const results = qb.findNodesByExactName(['nonExistentXYZ123']);
+      expect(results.length).toBe(0);
+    });
+  });
+
+  describe('findNodesByNameSubstring', () => {
+    it('finds nodes by substring', () => {
+      qb.insertNode(mkNode({ id: 'fn::subFoo', name: 'mySubstringFoo' }));
+
+      const results = qb.findNodesByNameSubstring('SubstringFoo');
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results.some((r: any) => r.node.name === 'mySubstringFoo')).toBe(true);
+    });
+
+    it('returns empty for non-matching substring', () => {
+      const results = qb.findNodesByNameSubstring('zzzzNonExistent999');
+      expect(results.length).toBe(0);
+    });
+  });
+
+  describe('executeCypher', () => {
+    it('executes raw Cypher and returns rows', () => {
+      qb.insertNode(mkNode({ id: 'fn::cypRaw', name: 'cypherRawTest' }));
+
+      const rows = qb.executeCypher("MATCH (n:CodeNode {name: 'cypherRawTest'}) RETURN n.name");
+      expect(rows.length).toBe(1);
+      expect(rows[0][0]).toBe('cypherRawTest');
+    });
+
+    it('returns empty for no-match query', () => {
+      const rows = qb.executeCypher("MATCH (n:CodeNode {name: 'doesNotExist999'}) RETURN n.name");
+      expect(rows.length).toBe(0);
+    });
+  });
+
   // ── Summary ──────────────────────────────────────────────
 
   console.log(`\n  ${_passed} passed, ${_failed} failed`);
