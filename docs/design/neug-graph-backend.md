@@ -55,7 +55,7 @@ common cases but cannot expose arbitrary structural queries.
 
 ## What: NeuG
 
-[NeuG](https://github.com/GraphScope/neug) is a lightweight, embeddable graph
+[NeuG](https://github.com/alibaba/neug) is a lightweight, embeddable graph
 database.
 
 Key properties relevant to CodeGraph:
