@@ -17,7 +17,7 @@
  */
 export const SERVER_INSTRUCTIONS = `# Codegraph — code intelligence over an indexed knowledge graph
 
-Codegraph is a SQLite knowledge graph of every symbol, edge, and file
+Codegraph is a knowledge graph of every symbol, edge, and file
 in the workspace. Reads are sub-millisecond; the index lags writes by
 about a second through the file watcher. Consult it BEFORE writing or
 editing code, not during.
