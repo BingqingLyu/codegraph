@@ -1,18 +1,14 @@
 /**
- * NeuG Backend — tests using the real neug native package.
+ * NeuG Backend — tests using the neug native package.
  *
  * Verifies NeuGQueryBuilder's CRUD operations, search, and graph traversal
- * against a real NeuG database. Skipped when the neug package is not installed
- * or when running on a non-ARM64 architecture.
+ * against NeuG database. Skipped when the neug package is not installed.
  *
  * Run directly:
- *   arch -arm64 npx tsx __tests__/neug-backend.test.ts
+ *   npx tsx __tests__/neug-backend.test.ts
  *
  * Or via npm:
  *   npm run test:neug
- *
- * NOTE: Cannot run through vitest because neug's C++ runtime SEGVs on
- * process exit, which vitest's worker pool treats as a crash.
  */
 
 import * as fs from 'fs';
@@ -100,21 +96,15 @@ function expect(actual: any) {
 async function main() {
   let neug: any;
   try {
-    neug = require('neug');
+    neug = require('@graphscope-neug/neug');
   } catch {
     console.log('\n  ⚠ neug package not installed — skipping all tests\n');
     process.exit(0);
   }
 
-  if (process.arch !== 'arm64') {
-    console.log(`\n  ⚠ neug requires ARM64, current arch is ${process.arch} — skipping\n`);
-    console.log('    Hint: run with "arch -arm64 npx tsx __tests__/neug-backend.test.ts"\n');
-    process.exit(0);
-  }
-
   const { NeuGQueryBuilder, NeuGConnectionWrapper } = await import('../src/db/neug-backend');
 
-  console.log('\nNeuG Backend Tests (real neug package)\n');
+  console.log('\nNeuG Backend Tests\n');
 
   // Single DB instance to avoid SEGV from repeated open/close
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'neug-test-'));

@@ -435,8 +435,8 @@ The exact text is `src/mcp/server-instructions.ts` — the single source of trut
 │              SQLite knowledge graph (default)                     │
 │          symbols · edges · files · FTS5 full-text search          │
 │                           — or —                                  │
-│           NeuG graph database (optional, Cypher-native)           │
-│       property graph · CSR-optimized · declarative queries        │
+│              NeuG graph database (optional)                       │
+│              property graph · Cypher-native                       │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -585,9 +585,11 @@ NeuG is built on [GraphScope Flex](https://github.com/alibaba/GraphScope), which
 codegraph init --backend neug
 
 # All existing commands work unchanged
+codegraph query myFunction
 codegraph callers myFunction
 codegraph callees myFunction
 codegraph impact myFunction
+# ... and all other CLI commands (index, sync, status, files, context, etc.)
 
 # NeuG-only: run arbitrary Cypher queries
 codegraph cypher "MATCH (a:CodeNode {name: 'handleRequest'})-[e:CodeEdge*1..3]->(b:CodeNode) RETURN a.name, b.name"
@@ -596,7 +598,7 @@ codegraph cypher "MATCH (n:CodeNode)-[e:CodeEdge]->() RETURN n.kind, count(e) OR
 
 ### Platform support
 
-NeuG ships native binaries for **macOS ARM64**, **Linux x86_64**, and **Linux ARM64**. The `neug` npm package must be installed separately (`npm install neug`).
+NeuG ships native binaries for **macOS ARM64**, **Linux x86_64**, and **Linux ARM64**. The `@graphscope-neug/neug` package is included as a dependency and installed automatically with CodeGraph.
 
 ### Upcoming: graph algorithms
 

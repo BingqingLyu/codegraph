@@ -281,12 +281,12 @@ export class NeuGDatabaseConnection {
 
   private static async loadNeuG(): Promise<any> {
     try {
-      // @ts-expect-error neug package not yet published to npm
-      return await import('neug');
+      // @ts-expect-error no type declarations shipped yet
+      return await import('@graphscope-neug/neug');
     } catch {
       throw new Error(
-        'The "neug" package is not installed. Install it to use the NeuG backend:\n' +
-        '  npm install neug\n' +
+        'The "@graphscope-neug/neug" package is not installed. Install it to use the NeuG backend:\n' +
+        '  npm install @graphscope-neug/neug\n' +
         'Note: the neug npm package requires a platform-specific native binary.'
       );
     }
